@@ -104,16 +104,20 @@ object YIO {
     Async(register)
 
   def collectAll[A](yios: List[YIO[A]]): YIO[List[A]] =
-    ???
+    yios.foldRight(succeed(List.empty[A])) { case (yio, result) => 
+      result.zipWith(yio)((list, a) => a :: list)
+    }
 
   def collectAllPar[A](yios: List[YIO[A]]): YIO[List[A]] =
-    ???
+    collectAll(yios.map(_.fork)).flatMap { fibers =>
+      collectAll(fibers.map(_.join))
+    }
 
   def foreach[A, B](as: List[A])(f: A => YIO[B]): YIO[List[B]] =
-    ???
+   collectAll(as.map(f))
 
   def foreachPar[A, B](as: List[A])(f: A => YIO[B]): YIO[List[B]] =
-    ???
+    collectAllPar(as.map(f))
 
   def succeed[A](value: => A): YIO[A] =
     Succeed(() => value)
@@ -133,6 +137,7 @@ trait Fiber[+A] {
 
 final case class RuntimeFiber[A](yio: YIO[A]) extends Fiber[A] {
 
+  // should be parametrized
   val executor = scala.concurrent.ExecutionContext.global
 
   type ErasedYIO = YIO[Any]
@@ -141,43 +146,58 @@ final case class RuntimeFiber[A](yio: YIO[A]) extends Fiber[A] {
   private var currentYIO: ErasedYIO = yio
   private val stack = scala.collection.mutable.Stack[ErasedContinuation]()
 
+  // is runLoop running
   private val running =
     new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  // nano-actor like approach
+  // processes messages from inbox in a single threaded way inside processFiberMessage and runLoop
   private val inbox =
     new java.util.concurrent.ConcurrentLinkedQueue[FiberMessage]
 
   private val observers =
     scala.collection.mutable.Set[YIO[Any] => Unit]()
 
+  // produced value from currentYIO
   private var exit: A =
     null.asInstanceOf[A]
 
   def offerToInbox(fiberMessage: FiberMessage): Unit = {
     inbox.offer(fiberMessage)
+
+    // if we were not running before and can set it to running
     if (running.compareAndSet(false, true)) {
       drainQueueOnExecutor()
     }
+
+    // someone else is already running te loop when the message comes in
   }
 
+  // process msgs on unknown, available thread
   def drainQueueOnExecutor(): Unit =
     executor.execute(() => drainQueueOnCurrentThread)
 
   @annotation.tailrec
   def drainQueueOnCurrentThread(): Unit = {
+    // poll until there is no messages
     var fiberMessage = inbox.poll()
     while (fiberMessage != null) {
       processFiberMessage(fiberMessage)
       fiberMessage = inbox.poll()
     }
+    // stopped running loop
     running.set(false)
+
+    // something might have been added in between `while` and `running.set`
     if (!inbox.isEmpty) {
       if (running.compareAndSet(false, true)) {
         drainQueueOnCurrentThread()
       }
     }
+    // no messages, q drained
   }
 
+  // like Actor's receive
   def processFiberMessage(fiberMessage: FiberMessage): Unit =
     fiberMessage match {
       case FiberMessage.Resume(yio) =>
@@ -208,10 +228,12 @@ final case class RuntimeFiber[A](yio: YIO[A]) extends Fiber[A] {
         case YIO.Succeed(value) =>
           val computedValue = value()
           if (stack.isEmpty) {
+            // everything in current stack is computed
             exit = computedValue.asInstanceOf[A]
             observers.foreach(_(YIO.succeed(computedValue)))
             loop = false
           } else {
+            // call next stack frame (continuation) with currently computed value
             val nextContinuation = stack.pop()
             currentYIO = nextContinuation(computedValue)
           }
