@@ -96,6 +96,7 @@ trait YIO[+A] { self =>
       b     <- right.join
     } yield f(a, b)
 
+  val never: YIO[Nothing] = async(_ => ())
 }
 
 object YIO {
@@ -283,4 +284,58 @@ object Example extends App {
     }
 
   parallel.unsafeRunSync()
+}
+
+sealed trait Promise[A] {
+  def await: YIO[A]
+  def succeed(a: A): YIO[Boolean]
+}
+object Promise {
+  def make[A]: YIO[Promise[A]] =
+    YIO.succeed {
+      // real impl should use Ref
+      val state = new java.util.concurrent.atomic.AtomicReference[State[A]](Empty(Nil))
+
+      new Promise[A] {
+        def await: YIO[A] = 
+          YIO.async { cb => 
+            var loop = true
+            while (loop) { // prevents race conditions
+              val currentState = state.get
+              currentState match {
+                case Done(value) => 
+                  loop = false
+                  cb(YIO.succeed(value))
+                case Empty(observers) =>
+                  if (state.compareAndSet(currentState, Empty(cb :: observers))) {
+                    loop = false
+                  }  // someone else made concurrent update at the exact same moment -> continue looping
+              }
+            }
+          }
+        def succeed(a: A): YIO[Boolean] = YIO.succeed {
+          var loop = true
+          var result = false
+          while (loop) {
+              val currentState = state.get
+              currentState match {
+              case Done(value) => 
+                loop = false
+              case Empty(observers) =>
+                if (state.compareAndSet(currentState, Done(a))) {
+                  observers.foreach(_(YIO.succeed(a)))
+                  result = true
+                  loop = false
+                }  // someone else made concurrent update at the exact same moment -> continue looping
+            }
+          }
+
+          result
+        }
+      }
+    }
+
+  sealed trait State[A]
+  final case class Done[A](value: A) extends State[A]
+  final case class Empty[A](observers: List[YIO[A] => Unit]) extends State[A]
 }

@@ -65,7 +65,7 @@ object BasicAssertions extends ZIOSpecDefault {
        *
        * Using `assertTrue`, assert that 2 + 2 == 4.
        */
-      assertTrue(false)
+      assertTrue(2 + 2 == 4)
     } +
       test("sherlock misspelling") {
 
@@ -74,7 +74,7 @@ object BasicAssertions extends ZIOSpecDefault {
          *
          * Examine the output of this failed test. Then fix the test so that it passes.
          */
-        assertTrue("sherlock".contains("sure"))
+        assertTrue("sherlock".contains("lock"))
       } +
       test("multiple assertions") {
         val string = "cannac"
@@ -89,7 +89,7 @@ object BasicAssertions extends ZIOSpecDefault {
          *  - the string starts with "can"
          *  - the reverse of the string is equal to itself
          */
-        assertTrue(false)
+        assertTrue(string.length == 6) && assertTrue(string.startsWith("c")) && assertTrue(string.reverse == string)
       }
     /**
    * EXERCISE
