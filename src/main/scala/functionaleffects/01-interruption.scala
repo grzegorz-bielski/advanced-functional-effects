@@ -366,11 +366,16 @@ object Graduation extends ZIOSpecDefault {
             zio: ZIO[R, E, A]
         )(finalizer: UIO[Any]): ZIO[R, E, A] =
           ZIO.uninterruptibleMask { restore =>
-            restore(zio)
-              .foldCauseZIO(
-                cause => finalizer *> ZIO.failCause(cause),
-                value => finalizer *> ZIO.succeed(value)
-              )
+            restore(zio).foldCauseZIO(
+              cause =>
+                (
+                  finalizer.foldCauseZIO(
+                    cause2 => ZIO.failCause(cause && cause2),
+                    _ => ZIO.refailCause(cause)
+                  )
+                ),
+              value => finalizer *> ZIO.succeed(value)
+            )
           }
 
         for {
@@ -396,11 +401,10 @@ object Graduation extends ZIOSpecDefault {
           )(release: A => UIO[Any])(use: A => ZIO[R, E, B]): ZIO[R, E, B] =
             ZIO.uninterruptibleMask { restore =>
               acquire.flatMap { a =>
-                restore(use(a))
-                  .foldCauseZIO(
-                    cause => release(a) *> ZIO.failCause(cause),
-                    value => release(a) *> ZIO.succeed(value)
-                  )
+                restore(use(a)).foldCauseZIO(
+                  cause => release(a) *> ZIO.failCause(cause),
+                  value => release(a) *> ZIO.succeed(value)
+                )
               }
             }
 
@@ -417,4 +421,25 @@ object Graduation extends ZIOSpecDefault {
           } yield assertTrue(v)
         }
     }
+}
+
+object ResourceExample extends ZIOAppDefault {
+  val acquire1 = ZIO.debug("acquired1").as(42)
+  val release1 = ZIO.debug("release1")
+  val myResource1: ZIO[Scope, Nothing, Int] = 
+    // replaces ZManaged from ZIO 1.0 - CE Resource alternative
+    ZIO.acquireRelease(acquire1)(_ => release1)
+
+  val acquire2 = ZIO.debug("acquired2").as(42)
+  val release2 = ZIO.debug("release2")
+  val myResource2: ZIO[Scope, Nothing, Int] = 
+    ZIO.acquireRelease(acquire2)(_ => release2)
+
+  val myResource3 = for {
+    a <- myResource1
+    b <- myResource2
+  } yield (a, b)
+  val run = ZIO.scoped { // like resource.use
+    myResource3
+  }
 }
