@@ -104,3 +104,13 @@ object ZIOStreams {
 // FS2
 // Stream[F[_], A] -> produce value(s) A using F[_]
 // type Pipe[F[_], -I, +O] = Stream[F, I] => Stream[F, O]
+
+
+// (ZIO 2 stream -> backed by ZChannel)
+
+trait ZChannel[-Env, -InErr, -InElem, -InDone, +OutErr, +OutElem, +OutDone]
+
+object Examples {
+    type ZStream[-R, +E, +A] = ZChannel[R, Any, Any, Any, E, Chunk[A], Any]
+    type ZIO[-R, +E, +A]     = ZChannel[R, Any, Any, Any, E, Nothing, A]
+}

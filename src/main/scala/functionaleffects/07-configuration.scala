@@ -19,6 +19,9 @@ import zio.test.TestAspect._
 
 import scala.concurrent.ExecutionContext
 import java.util.concurrent.atomic.AtomicReference
+import java.io.IOException
+
+// 01:07:28
 
 object RuntimeSpec extends ZIOSpecDefault {
   implicit def unsafe: Unsafe = null.asInstanceOf[zio.Unsafe]
@@ -50,10 +53,10 @@ object RuntimeSpec extends ZIOSpecDefault {
             _       <- ZIO.debug(integer)
           } yield integer.get[Int] * 2
 
-        val runtime = Runtime(ZEnvironment(19), FiberRefs.empty, RuntimeFlags.default)
+        val runtime = Runtime(ZEnvironment(21), FiberRefs.empty, RuntimeFlags.default)
 
         assertTrue(runtime.unsafe.run(effect) == Exit.succeed(42))
-      } @@ ignore +
+      } +
         /**
          * EXERCISE
          *
@@ -77,13 +80,16 @@ object RuntimeSpec extends ZIOSpecDefault {
             throw t
           }
 
-          val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          // val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          val runtime = Runtime.unsafe.fromLayer(Runtime.setReportFatal(captureFatal))
 
-          try runtime.unsafe.run(ZIO.succeed(throw fatalError))
+          try runtime.unsafe.run(ZIO.succeed(throw fatalError)
+            // .provide(Runtime.setReportFatal(captureFatal))
+          )
           catch { case _: Throwable => () }
 
           assertTrue(fatalRef.get.get == fatalError)
-        } @@ ignore +
+        } +
         /**
          * EXERCISE
          *
@@ -98,12 +104,13 @@ object RuntimeSpec extends ZIOSpecDefault {
          * unit test will pass.
          */
         test("enableCurrentFiber") {
-          val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          // val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          val runtime = Runtime.unsafe.fromLayer(Runtime.enableCurrentFiber)
 
           val option = runtime.unsafe.run(ZIO.attempt(Fiber.currentFiber()(unsafe))).getOrThrowFiberFailure()
 
           assertTrue(option.isDefined)
-        } @@ ignore +
+        } +
         /**
          * EXERCISE
          *
@@ -139,12 +146,13 @@ object RuntimeSpec extends ZIOSpecDefault {
             }
           }
 
-          val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          // val runtime = Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.default)
+          val runtime = Runtime.unsafe.fromLayer(Runtime.setExecutor(executor))
 
           runtime.unsafe.run(ZIO.yieldNow *> ZIO.unit)
 
           assertTrue(ranOnEC.get == true)
-        } @@ ignore +
+        } +
         /**
          * EXERCISE
          *
@@ -180,13 +188,19 @@ object RuntimeSpec extends ZIOSpecDefault {
             throw t
           }
 
-          Runtime.default.unsafe.run {
-            ZIO.succeed(throw ioException) // HERE
-          }
+          val runtime = Runtime.unsafe.fromLayer(
+            Runtime.setReportFatal(captureFatal) ++ Runtime.addFatal(classOf[Throwable])
+          )
+
+          try {
+            runtime.unsafe.run {
+              ZIO.succeed(throw ioException) // HERE
+            }
+          } catch { case _: Throwable => () }
 
           assertTrue(fatalRef.get.get == ioException)
         }
-    } @@ jvmOnly @@ ignore +
+    } @@ jvmOnly +
       /**
        * EXERCISE
        *
